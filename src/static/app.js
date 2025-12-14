@@ -57,7 +57,16 @@ document.addEventListener('DOMContentLoaded', () => {
         ul.className = 'participants-list';
         a.participants.forEach(p => {
           const li = document.createElement('li');
-          li.innerHTML = `<span class="participant-chip">${escapeHtml(p)}</span>`;
+          const span = document.createElement('span');
+          span.className = 'participant-chip';
+          span.textContent = p;
+          const btn = document.createElement('button');
+          btn.className = 'remove-btn';
+          btn.setAttribute('aria-label', `Remove ${p}`);
+          btn.dataset.email = p;
+          btn.textContent = '✕';
+          li.appendChild(span);
+          li.appendChild(btn);
           ul.appendChild(li);
         });
         participantsSection.appendChild(ul);
@@ -112,29 +121,58 @@ document.addEventListener('DOMContentLoaded', () => {
         return res.json();
       })
       .then(() => {
-        // update the relevant participants list in the DOM
-        const cards = Array.from(activitiesList.getElementsByClassName('activity-card'));
-        for (const card of cards) {
-          const h4 = card.querySelector('h4');
-          if (h4 && h4.textContent === activity) {
-            let ul = card.querySelector('.participants-list');
-            if (!ul) {
-              // remove "No participants yet." paragraph if present
-              const info = card.querySelector('.participants-section .info');
-              if (info) info.remove();
-              ul = document.createElement('ul');
-              ul.className = 'participants-list';
-              card.querySelector('.participants-section').appendChild(ul);
-            }
-            const li = document.createElement('li');
-            li.innerHTML = `<span class="participant-chip">${escapeHtml(email)}</span>`;
-            ul.appendChild(li);
-            break;
-          }
-        }
-        showMessage(`Signed up ${email} for ${activity}`, 'success');
-        form.reset();
+        // refresh activities from server to ensure UI matches backend state
+        fetch('/activities')
+          .then(res => {
+            if (!res.ok) throw new Error('Failed to reload activities');
+            return res.json();
+          })
+          .then(renderActivities)
+          .then(() => {
+            showMessage(`Signed up ${email} for ${activity}`, 'success');
+            form.reset();
+          })
+          .catch(err => showMessage(err.message || 'Signup succeeded but failed to refresh UI', 'error'));
       })
       .catch(err => showMessage(err.message || 'Signup failed', 'error'));
+  });
+
+  // Delegate click handler for remove buttons
+  activitiesList.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.remove-btn');
+    if (!btn) return;
+
+    const li = btn.closest('li');
+    const card = btn.closest('.activity-card');
+    if (!card || !li) return;
+
+    const activity = card.querySelector('h4') && card.querySelector('h4').textContent;
+    const email = btn.dataset.email;
+    if (!activity || !email) return;
+
+    if (!confirm(`Remove ${email} from ${activity}?`)) return;
+
+    fetch(`/activities/${encodeURIComponent(activity)}/participants?email=${encodeURIComponent(email)}`, {
+      method: 'DELETE'
+    })
+      .then(async res => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || 'Failed to remove participant');
+        }
+        return res.json();
+      })
+      .then(() => {
+        // refresh activities from server to reflect removal
+        fetch('/activities')
+          .then(res => {
+            if (!res.ok) throw new Error('Failed to reload activities');
+            return res.json();
+          })
+          .then(renderActivities)
+          .then(() => showMessage(`Removed ${email} from ${activity}`, 'success'))
+          .catch(err => showMessage(err.message || 'Removed but failed to refresh UI', 'error'));
+      })
+      .catch(err => showMessage(err.message || 'Failed to remove participant', 'error'));
   });
 });
